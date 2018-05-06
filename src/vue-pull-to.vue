@@ -1,6 +1,12 @@
 <template>
   <div class="vue-pull-to-wrapper"
        :style="{ height: wrapperHeight, transform: `translate3d(0, ${diff}px, 0)` }">
+    <div style="position:absolute; top: 0; border: 1px solid red;z-index: 999999;background: #fff;">
+      <p>Direction: {{ direction }}</p>
+      <p>Distance: {{ distance }}</p>
+      <p>State: {{ state }}</p>
+      <p>StartScrollTop: {{ startScrollTop }}</p>
+    </div>
     <div v-if="topLoadMethod"
          :style="{ height: `${topBlockHeight}px`, marginTop: `${-topBlockHeight}px` }"
          class="action-block">
@@ -10,17 +16,13 @@
         <p class="default-text">{{ topText }}</p>
       </slot>
     </div>
-    <div class="scroll-container">
+    <div class="scroll-container"
+         ref="scrollEl"
+         @scroll="handleScroll"
+         @touchstart="handleTouchStart"
+         @touchmove="handleTouchMove"
+         @touchend="handleTouchEnd">
       <slot></slot>
-    </div>
-    <div v-if="bottomLoadMethod"
-         :style="{ height: `${bottomBlockHeight}px`, marginBottom: `${-bottomBlockHeight}px` }"
-         class="action-block">
-      <slot name="bottom-block"
-            :state="state"
-            :state-text="bottomText">
-        <p class="default-text">{{ bottomText }}</p>
-      </slot>
     </div>
   </div>
 </template>
@@ -37,10 +39,6 @@
         default: 2
       },
       topBlockHeight: {
-        type: Number,
-        default: 50
-      },
-      bottomBlockHeight: {
         type: Number,
         default: 50
       },
@@ -99,12 +97,12 @@
         beforeDiff: 0,
         topText: '',
         bottomText: '',
-        state: '',
+        state: 'idle',
         bottomReached: false,
+        topReached: true,
         throttleEmitTopPull: null,
         throttleEmitBottomPull: null,
         throttleEmitScroll: null,
-        throttleOnInfiniteScroll: null
       };
     },
     computed: {
@@ -169,7 +167,7 @@
 
           // reset state
           setTimeout(() => {
-            this.state = '';
+            this.state = 'idle';
           }, 200);
         }, loadedStayTime);
       },
@@ -181,27 +179,21 @@
         }, duration);
       },
 
-      checkBottomReached() {
-        return this.scrollEl.scrollTop + this.scrollEl.offsetHeight + 1 >= this.scrollEl.scrollHeight;
-      },
-
       handleTouchStart(event) {
-        this.startY = event.touches[0].clientY;
+        this.startY = event.touches ? event.touches[0].clientY : event.clientY;
         this.beforeDiff = this.diff;
-        this.startScrollTop = this.scrollEl.scrollTop;
-        this.bottomReached = this.checkBottomReached();
       },
 
       handleTouchMove(event) {
-        this.currentY = event.touches[0].clientY;
+        this.currentY = event.touches ? event.touches[0].clientY : event.clientY;
         this.distance = (this.currentY - this.startY) / this.distanceIndex + this.beforeDiff;
         this.direction = this.distance > 0 ? 'down' : 'up';
 
-        if (this.startScrollTop === 0 && this.direction === 'down' && this.isTopBounce) {
+        if (this.startScrollTop <= 0 && this.direction === 'down' && this.isTopBounce) {
           event.preventDefault();
           event.stopPropagation();
           this.diff = this.distance;
-          this.isThrottleTopPull ? this.throttleEmitTopPull(this.diff) : this.$emit('top-pull', this.diff);
+          // this.isThrottleTopPull ? this.throttleEmitTopPull(this.diff) : this.$emit('top-pull', this.diff);
 
           if (typeof this.topLoadMethod !== 'function') return;
 
@@ -209,28 +201,14 @@
             this.state !== 'pull' && this.state !== 'loading') {
             this.actionPull();
           } else if (this.distance >= this._topConfig.triggerDistance &&
-            this.state !== 'trigger' && this.state !== 'loading') {
-            this.actionTrigger();
-          }
-        } else if (this.bottomReached && this.direction === 'up' && this.isBottomBounce) {
-          event.preventDefault();
-          event.stopPropagation();
-          this.diff = this.distance;
-          this.isThrottleBottomPull ? this.throttleEmitBottomPull(this.diff) : this.$emit('bottom-pull', this.diff);
-
-          if (typeof this.bottomLoadMethod !== 'function') return;
-
-          if (Math.abs(this.distance) < this._bottomConfig.triggerDistance &&
-            this.state !== 'pull' && this.state !== 'loading') {
-            this.actionPull();
-          } else if (Math.abs(this.distance) >= this._bottomConfig.triggerDistance &&
-            this.state !== 'trigger' && this.state !== 'loading') {
+            this.state === 'pull') {
             this.actionTrigger();
           }
         }
       },
 
-      handleTouchEnd() {
+      handleTouchEnd(event) {
+        event.stopPropagation();
         if (this.diff !== 0) {
           if (this.state === 'trigger') {
             this.actionLoading();
@@ -243,14 +221,7 @@
       },
 
       handleScroll(event) {
-        this.isThrottleScroll ? this.throttleEmitScroll(event) : this.$emit('scroll', event);
-        this.throttleOnInfiniteScroll();
-      },
-
-      onInfiniteScroll() {
-        if (this.checkBottomReached()) {
-          this.$emit('infinite-scroll');
-        }
+        this.startScrollTop = this.scrollEl.scrollTop;
       },
 
       throttleEmit(delay, mustRunDelay = 0, eventName) {
@@ -263,24 +234,15 @@
         return throttle(throttleMethod, delay, mustRunDelay);
       },
 
-      bindEvents() {
-        this.scrollEl.addEventListener('touchstart', this.handleTouchStart);
-        this.scrollEl.addEventListener('touchmove', this.handleTouchMove);
-        this.scrollEl.addEventListener('touchend', this.handleTouchEnd);
-        this.scrollEl.addEventListener('scroll', this.handleScroll);
-      },
-
       createThrottleMethods() {
         this.throttleEmitTopPull = this.throttleEmit(200, 300, 'top-pull');
         this.throttleEmitBottomPull = this.throttleEmit(200, 300, 'bottom-pull');
         this.throttleEmitScroll = this.throttleEmit(100, 150, 'scroll');
-        this.throttleOnInfiniteScroll = throttle(this.onInfiniteScroll, 400);
       },
 
       init() {
-        this.createThrottleMethods();
+        // this.createThrottleMethods();
         this.scrollEl = this.$el.querySelector('.scroll-container');
-        this.bindEvents();
       }
     },
     mounted() {
